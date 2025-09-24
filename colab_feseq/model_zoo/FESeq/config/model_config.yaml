@@ -65,6 +65,10 @@ FESeq_tossctr: # TossCTR dataset experiment
     layer_norm: True
     use_residual: True
     bst_target_field: ["inventory_id"]
+    time_keys: []  # TossCTR has no time fields
+    num_time_embeddings: 0
+    time_log_base: 2
+    use_time_emb: False
     bst_sequence_field: ["seq_list"]
     seq_pooling_type: mean
     use_position_emb: True

@@ -92,8 +92,15 @@ class FESeq(BaseModel):
         self.seq_pooling_type = seq_pooling_type
         self.feature_map = feature_map
 
-        self.target_time_key = self.time_keys[0]
-        self.sequence_time_key = self.time_keys[1]
+        # Handle time_keys
+        self.time_keys = kwargs.get("time_keys", [])
+        if self.time_keys and len(self.time_keys) >= 2:
+            self.target_time_key = self.time_keys[0]
+            self.sequence_time_key = self.time_keys[1]
+        else:
+            # No time keys available - use None for time-based features
+            self.target_time_key = None
+            self.sequence_time_key = None
 
         self.interaction_layer_name = kwargs["interaction_layer_name"]
         self.use_seq_feature_interaction = kwargs["use_seq_feature_interaction"]
@@ -105,7 +112,7 @@ class FESeq(BaseModel):
         self.time_log_base = kwargs["time_log_base"]
         self.embedding_dim = embedding_dim
         self.num_heads = num_heads
-        self.embedding_layer = FeatureEmbeddingDict(feature_map, embedding_dim, self.time_keys)  # without time embedding layer
+        self.embedding_layer = FeatureEmbeddingDict(feature_map, embedding_dim, self.time_keys if self.time_keys else [])  # without time embedding layer
 
         self.use_pos_emb = use_position_emb
         self.use_time_emb = use_time_emb
@@ -156,7 +163,7 @@ class FESeq(BaseModel):
                                           attn_dropout=attention_dropout,
                                           attn_dim=rel_score_hidden_dim,
                                           use_scale=use_pooling_attn_scale)
-        self.dnn = MLP_Block(input_dim=feature_map.sum_emb_out_dim_wo_time(self.time_keys) + seq_out_dim,
+        self.dnn = MLP_Block(input_dim=feature_map.sum_emb_out_dim_wo_time(self.time_keys if self.time_keys else []) + seq_out_dim,
                              output_dim=1,
                              hidden_units=dnn_hidden_units,
                              hidden_activations=dnn_activations,
@@ -233,7 +240,7 @@ class FESeq(BaseModel):
             default_emb = einops.repeat(default_emb, 'b n -> b l n', l=concat_seq_emb.size(1))   
             concat_seq_emb = torch.cat([concat_seq_emb, default_emb], dim=-1)
 
-        if self.use_time_emb:
+        if self.use_time_emb and self.target_time_key is not None and self.sequence_time_key is not None:
             # generate time embedding
             target_time = inputs[:, self.feature_map.get_column_index(self.target_time_key)]
             sequence_time = inputs[:, self.feature_map.get_column_index(self.sequence_time_key)] 

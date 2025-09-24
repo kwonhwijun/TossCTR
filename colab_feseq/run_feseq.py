@@ -21,11 +21,28 @@ def setup_environment():
 def install_dependencies():
     """필요한 패키지 설치"""
     try:
-        print("📦 Installing dependencies...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], check=True)
+        # fuxictr 패키지가 이미 설치되어 있는지 확인
+        try:
+            import fuxictr
+            # 현재 디렉토리의 setup.py 버전과 비교
+            import pkg_resources
+            installed_version = pkg_resources.get_distribution('fuxictr').version
+            print(f"✅ fuxictr {installed_version} already installed.")
+            return
+        except (ImportError, pkg_resources.DistributionNotFound):
+            pass
+        
+        print("📦 Installing dependencies silently...")
+        # 조용한 설치 (출력 숨김)
+        result = subprocess.run([
+            sys.executable, "-m", "pip", "install", "-e", ".", 
+            "-q", "--quiet", "--no-deps", "--disable-pip-version-check"
+        ], check=True, capture_output=True, text=True)
         print("✅ Dependencies installed successfully!")
     except subprocess.CalledProcessError as e:
         print(f"❌ Failed to install dependencies: {e}")
+        if e.stderr:
+            print(f"Error details: {e.stderr}")
         raise
 
 def run_feseq_experiment(expid="FESeq_tossctr", gpu=0):
