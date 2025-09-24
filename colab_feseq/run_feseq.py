@@ -32,10 +32,27 @@ def run_feseq_experiment(expid="FESeq_tossctr", gpu=0):
     """FESeq 실험 실행"""
     setup_environment()
     
+    # 원래 디렉토리 저장
+    original_dir = os.getcwd()
+    
     # FESeq 디렉토리로 이동
-    feseq_dir = os.path.join(os.getcwd(), "model_zoo", "FESeq")
+    feseq_dir = os.path.join(original_dir, "model_zoo", "FESeq")
     os.chdir(feseq_dir)
     print(f"📁 Changed directory to: {feseq_dir}")
+    
+    # PYTHONPATH에 원래 디렉토리도 추가
+    if original_dir not in sys.path:
+        sys.path.insert(0, original_dir)
+    os.environ['PYTHONPATH'] = f"{original_dir}:{feseq_dir}"
+    print(f"✅ Updated PYTHONPATH: {os.environ['PYTHONPATH']}")
+    
+    # 설정 파일 확인
+    config_files = ["config/dataset_config.yaml", "config/model_config.yaml"]
+    for config_file in config_files:
+        if os.path.exists(config_file):
+            print(f"✅ Found config: {config_file}")
+        else:
+            print(f"❌ Missing config: {config_file}")
     
     # 실험 실행
     cmd = [
@@ -53,6 +70,9 @@ def run_feseq_experiment(expid="FESeq_tossctr", gpu=0):
     except subprocess.CalledProcessError as e:
         print(f"❌ FESeq experiment failed: {e}")
         raise
+    finally:
+        # 원래 디렉토리로 복귀
+        os.chdir(original_dir)
 
 if __name__ == "__main__":
     import argparse
@@ -69,3 +89,4 @@ if __name__ == "__main__":
     else:
         install_dependencies()
         run_feseq_experiment(args.expid, args.gpu)
+

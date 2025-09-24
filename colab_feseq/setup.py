@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="fuxictr",
-    version="2.0.2.colab",
+    version="2.0.2",
     author="FESeq Implementation",
     description="FuxiCTR for Colab execution",
     packages=setuptools.find_packages(),
@@ -12,3 +12,4 @@ setuptools.setup(
         "scikit-learn", "tqdm", "torch", "pyarrow"
     ]
 )
+

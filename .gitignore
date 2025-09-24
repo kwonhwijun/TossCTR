@@ -168,6 +168,9 @@ data/raw/*
 data/output/*
 !data/output/.gitkeep
 
+# Colab용 전처리된 데이터는 포함 (작은 샘플이므로)
+!colab_feseq/data/tossctr/*.csv
+
 # Model files
 *.pkl
 *.joblib
