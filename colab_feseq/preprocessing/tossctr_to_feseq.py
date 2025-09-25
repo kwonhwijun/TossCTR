@@ -17,8 +17,39 @@ def load_tossctr_sample(parquet_path: str, n_samples: int = 10000) -> pd.DataFra
     print(f"Loading {n_samples} samples from {parquet_path}")
     
     pf = pq.ParquetFile(parquet_path)
-    batch = next(pf.iter_batches(batch_size=n_samples))
-    df = batch.to_pandas()
+    
+    # n_samples가 0이면 전체 데이터 로드
+    if n_samples == 0:
+        print("Loading all data...")
+        df = pf.read().to_pandas()
+    else:
+        # 여러 배치에서 n_samples 만큼 로드
+        dfs = []
+        total_loaded = 0
+        batch_size = min(n_samples, 10000)  # 메모리 효율성을 위해 배치 크기 제한
+        
+        for batch in pf.iter_batches(batch_size=batch_size):
+            batch_df = batch.to_pandas()
+            remaining = n_samples - total_loaded
+            
+            if remaining <= 0:
+                break
+                
+            if len(batch_df) <= remaining:
+                # 배치 전체를 추가
+                dfs.append(batch_df)
+                total_loaded += len(batch_df)
+            else:
+                # 필요한 만큼만 추가
+                dfs.append(batch_df.iloc[:remaining])
+                total_loaded += remaining
+                break
+        
+        if dfs:
+            df = pd.concat(dfs, ignore_index=True)
+        else:
+            print("No data loaded!")
+            return pd.DataFrame()
     
     print(f"Loaded shape: {df.shape}")
     return df
