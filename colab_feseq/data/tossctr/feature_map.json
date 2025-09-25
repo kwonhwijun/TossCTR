@@ -1,7 +1,7 @@
 {
   "dataset_id": "tossctr_dataset",
   "num_fields": 80,
-  "total_features": 135,
+  "total_features": 136,
   "features": {
     "gender": {
       "type": "categorical",
@@ -15,7 +15,7 @@
     },
     "inventory_id": {
       "type": "categorical",
-      "vocab_size": 17,
+      "vocab_size": 18,
       "index": 2
     },
     "day_of_week": {
