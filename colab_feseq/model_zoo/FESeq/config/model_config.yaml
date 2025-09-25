@@ -44,7 +44,7 @@ FESeq_test:
     monitor: {'AUC': 1, 'logloss': -1}
     monitor_mode: 'max'
 
-FESeq_tossctr: # TossCTR dataset experiment
+FESeq_tossctr: # TossCTR dataset experiment (CSV format)
     model: FESeq
     dataset_id: tossctr_dataset
     loss: 'binary_crossentropy'
@@ -80,6 +80,50 @@ FESeq_tossctr: # TossCTR dataset experiment
     use_causal_mask: False
     batch_norm: False
     epochs: 5
+    shuffle: True
+    seed: 20222023
+    monitor: {'AUC': 1, 'logloss': -1}
+    monitor_mode: 'max'
+    interaction_layer_name: crossnetv2
+    use_seq_feature_interaction: True
+    seq_feature_interaction_layers: 1
+
+FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
+    model: FESeq
+    dataset_id: tossctr_h5_dataset
+    loss: 'binary_crossentropy'
+    metrics: ['logloss', 'AUC']
+    task: binary_classification
+    optimizer: adam
+    learning_rate: 1.0e-3
+    embedding_regularizer: 0
+    net_regularizer: 0
+    batch_size: 1024  # 더 큰 배치 사이즈 (H5는 메모리 효율적)
+    embedding_dim: 32
+    dnn_hidden_units: [256, 128, 64]
+    dnn_activations: ReLU
+    num_heads: 2
+    stacked_transformer_layers: 1
+    attention_dropout: 0.1
+    net_dropout: 0.1
+    layer_norm: True
+    use_residual: True
+    # TossCTR specific fields
+    default_field: ["gender", "age_group", "day_of_week", "hour"]
+    target_field: ["inventory_id"]
+    target_item_field: ["inventory_id"]
+    bst_target_field: ["inventory_id"]
+    bst_sequence_field: ["seq_list"]
+    sequence_field: ["seq_list"]  # Add this for FESeq
+    time_keys: []  # TossCTR has no time fields
+    num_time_embeddings: 0
+    time_log_base: 2
+    use_time_emb: False
+    seq_pooling_type: mean
+    use_position_emb: True
+    use_causal_mask: False
+    batch_norm: False
+    epochs: 10  # H5는 더 빠르므로 더 많은 epoch
     shuffle: True
     seed: 20222023
     monitor: {'AUC': 1, 'logloss': -1}
