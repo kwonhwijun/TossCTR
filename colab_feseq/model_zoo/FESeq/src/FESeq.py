@@ -121,7 +121,9 @@ class FESeq(BaseModel):
             self.time_embedding_layer = nn.Embedding(self.num_time_embeddings, embedding_dim, padding_idx=self.num_time_embeddings-1)
 
         if self.use_pos_emb:
-            self.num_pos_embeddings = feature_map.features[sequence_field[0]]["max_len"] + 2
+            # Handle both tuple and string sequence fields
+            seq_field_key = sequence_field[0] if isinstance(sequence_field[0], str) else sequence_field[0][0]
+            self.num_pos_embeddings = feature_map.features[seq_field_key]["max_len"] + 2
             self.pos_embedding_layer = nn.Embedding(self.num_pos_embeddings, embedding_dim, padding_idx=self.num_pos_embeddings-1)
         self.transformer_encoders = nn.ModuleList()
         seq_out_dim = 0

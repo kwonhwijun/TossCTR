@@ -64,12 +64,17 @@ FESeq_tossctr: # TossCTR dataset experiment
     net_dropout: 0.1
     layer_norm: True
     use_residual: True
+    # TossCTR specific fields
+    default_field: ["gender", "age_group", "day_of_week", "hour"]
+    target_field: ["inventory_id"]
+    target_item_field: ["inventory_id"]
     bst_target_field: ["inventory_id"]
+    bst_sequence_field: ["seq_list"]
+    sequence_field: ["seq_list"]  # Add this for FESeq
     time_keys: []  # TossCTR has no time fields
     num_time_embeddings: 0
     time_log_base: 2
     use_time_emb: False
-    bst_sequence_field: ["seq_list"]
     seq_pooling_type: mean
     use_position_emb: True
     use_causal_mask: False

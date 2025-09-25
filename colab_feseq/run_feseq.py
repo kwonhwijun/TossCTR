@@ -25,11 +25,17 @@ def install_dependencies():
         try:
             import fuxictr
             # 현재 디렉토리의 setup.py 버전과 비교
-            import pkg_resources
-            installed_version = pkg_resources.get_distribution('fuxictr').version
+            try:
+                # 최신 방식으로 시도
+                from importlib.metadata import version
+                installed_version = version('fuxictr')
+            except ImportError:
+                # 구버전 Python 호환성
+                import pkg_resources
+                installed_version = pkg_resources.get_distribution('fuxictr').version
             print(f"✅ fuxictr {installed_version} already installed.")
             return
-        except (ImportError, pkg_resources.DistributionNotFound):
+        except (ImportError, Exception):
             pass
         
         print("📦 Installing dependencies silently...")
