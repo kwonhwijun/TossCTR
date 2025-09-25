@@ -87,26 +87,47 @@ class TossCTRParquetProcessor:
         logging.info(f"Numeric features: {len(self.numeric_features)}")
         logging.info(f"Sequence features: {len(self.sequence_features)}")
     
+    def _ensure_sequence_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """시퀀스 컬럼 보정: parquet에 seq_list가 없고 seq만 있는 경우 생성"""
+        # seq_list가 필요한데 없고, seq가 있으면 파생 생성
+        for col in self.sequence_features:
+            if col not in df.columns:
+                # 흔히 원본에 'seq'로 존재함
+                if 'seq' in df.columns:
+                    logging.info(f"Deriving missing sequence column '{col}' from 'seq'")
+                    df[col] = df['seq'].apply(lambda x: self.preprocess_sequence(x, max_len=50))
+                else:
+                    # 완전 없는 경우 빈 시퀀스 채움
+                    logging.warning(f"Sequence column '{col}' not found. Filling with PAD-only sequences.")
+                    df[col] = ''
+        return df
+
     def load_parquet_chunks(self, parquet_path: str, chunk_size: int = 50000) -> pd.DataFrame:
-        """Parquet 파일을 청크 단위로 로드"""
+        """Parquet 파일을 청크 단위로 로드 (존재하는 컬럼만 안전하게 선택)"""
         logging.info(f"Loading parquet file: {parquet_path}")
         
         pf = pq.ParquetFile(parquet_path)
         total_rows = pf.metadata.num_rows
         logging.info(f"Total rows: {total_rows:,}")
         
-        # 필요한 컬럼만 선택
-        all_needed_cols = (self.categorical_features + 
-                          self.numeric_features + 
-                          self.sequence_features + 
-                          [self.label_col['name']])
+        # parquet에 실제 존재하는 컬럼으로 필터링
+        schema_cols = set(pf.schema.names)
+        required_cols = set(self.categorical_features + self.numeric_features + self.sequence_features + [self.label_col['name']])
+        read_cols = [c for c in required_cols if c in schema_cols]
+        # seq_list가 필요하지만 없음 + 'seq'가 있으면 함께 읽어서 파생
+        if any((c not in schema_cols) for c in self.sequence_features) and ('seq' in schema_cols):
+            if 'seq' not in read_cols:
+                read_cols.append('seq')
         
         chunks = []
-        for batch in pf.iter_batches(batch_size=chunk_size, columns=all_needed_cols):
+        for batch in pf.iter_batches(batch_size=chunk_size, columns=read_cols):
             chunk_df = batch.to_pandas()
             chunks.append(chunk_df)
         
-        df = pd.concat(chunks, ignore_index=True)
+        df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+        # 시퀀스 컬럼 보정
+        if not df.empty:
+            df = self._ensure_sequence_columns(df)
         logging.info(f"Loaded shape: {df.shape}")
         return df
     
@@ -276,59 +297,62 @@ class TossCTRParquetProcessor:
         return arrays
     
     def save_feature_map(self):
-        """feature_map.json 파일 생성"""
-        feature_map = {
-            "dataset_id": "tossctr_dataset",
-            "num_fields": 0,
-            "total_features": 0,
-            "features": {},
-            "labels": [self.label_col['name']]
-        }
-        
-        feature_idx = 0
-        
+        """feature_map.json 파일 생성 (FuxiCTR 포맷 호환)"""
+        features_list = []  # FuxiCTR는 [{name: spec}, ...] 포맷 사용
+        num_fields = 0
+        total_features = 0
+
         # 범주형 피처
         for col in self.categorical_features:
             if col in self.encoders:
                 vocab_size = len(self.encoders[col].classes_)
-                feature_map["features"][col] = {
+                spec = {
                     "type": "categorical",
-                    "vocab_size": vocab_size,
-                    "index": feature_idx
+                    "vocab_size": vocab_size
                 }
-                feature_map["total_features"] += vocab_size
-                feature_idx += 1
-        
+                features_list.append({col: spec})
+                total_features += vocab_size
+                num_fields += 1
+
         # 수치형 피처
         for col in self.numeric_features:
             if col in self.scalers:
-                feature_map["features"][col] = {
-                    "type": "numeric",
-                    "index": feature_idx
+                spec = {
+                    "type": "numeric"
                 }
-                feature_map["total_features"] += 1
-                feature_idx += 1
-        
+                features_list.append({col: spec})
+                total_features += 1
+                num_fields += 1
+
         # 시퀀스 피처
         for col in self.sequence_features:
             if col in self.encoders:
                 encoder_info = self.encoders[col]
-                feature_map["features"][col] = {
+                spec = {
                     "type": "sequence",
+                    "dtype": "str",
                     "vocab_size": encoder_info['vocab_size'],
                     "max_len": encoder_info['max_len'],
-                    "index": feature_idx
+                    # 토큰 임베딩은 inventory_id와 공유
+                    "share_embedding": "inventory_id",
+                    "feature_encoder": None
                 }
-                feature_map["total_features"] += encoder_info['vocab_size']
-                feature_idx += 1
-        
-        feature_map["num_fields"] = feature_idx
-        
-        # 저장
+                features_list.append({col: spec})
+                total_features += encoder_info['vocab_size']
+                num_fields += 1
+
+        feature_map = {
+            "dataset_id": "tossctr_dataset",
+            "num_fields": num_fields,
+            "total_features": total_features,
+            "input_length": 0,  # FeatureMap.load에서 재계산됨
+            "features": features_list,
+            "labels": [self.label_col['name']]
+        }
+
         feature_map_path = os.path.join(self.output_dir, "feature_map.json")
         with open(feature_map_path, 'w') as f:
             json.dump(feature_map, f, indent=2)
-        
         logging.info(f"Saved feature_map.json: {feature_map['num_fields']} fields, {feature_map['total_features']} features")
     
     def save_processors(self):
