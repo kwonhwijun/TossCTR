@@ -90,7 +90,7 @@ FESeq_tossctr: # TossCTR dataset experiment (CSV format)
 
 FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     model: FESeq
-    dataset_id: tossctr_h5_dataset
+    dataset_id: tossctr_dataset
     loss: 'binary_crossentropy'
     metrics: ['logloss', 'AUC']
     task: binary_classification
@@ -98,7 +98,7 @@ FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     learning_rate: 1.0e-3
     embedding_regularizer: 0
     net_regularizer: 0
-    batch_size: 1024  # 더 큰 배치 사이즈 (H5는 메모리 효율적)
+    batch_size: 128  # 더 큰 배치 사이즈 (H5는 메모리 효율적)
     embedding_dim: 32
     dnn_hidden_units: [256, 128, 64]
     dnn_activations: ReLU
@@ -123,7 +123,7 @@ FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     use_position_emb: True
     use_causal_mask: False
     batch_norm: False
-    epochs: 10  # H5는 더 빠르므로 더 많은 epoch
+    epochs: 1  # H5는 더 빠르므로 더 많은 epoch
     shuffle: True
     seed: 20222023
     monitor: {'AUC': 1, 'logloss': -1}
