@@ -12,6 +12,37 @@ Base:
     feature_specs: null
     feature_config: null
 
+FESeq_toy:
+    model: FESeq
+    dataset_id: tossctr_toy_dataset
+    loss: 'binary_crossentropy'
+    metrics: ['logloss', 'AUC']
+    task: binary_classification
+    optimizer: adam
+    learning_rate: 1.0e-3
+    embedding_regularizer: 0
+    net_regularizer: 0
+    batch_size: 64
+    embedding_dim: 8
+    dnn_hidden_units: [128, 64]
+    dnn_activations: relu
+    num_heads: 2
+    stacked_transformer_layers: 1
+    attention_dropout: 0.1
+    net_dropout: 0.1
+    layer_norm: True
+    use_residual: True
+    seq_pooling_type: mean
+    use_position_emb: True
+    use_causal_mask: False
+    batch_norm: False
+    epochs: 2
+    shuffle: True
+    seed: 42
+    monitor: {'AUC': 1, 'logloss': -1}
+    monitor_mode: 'max'
+    gpu: 0
+
 FESeq_test:
     model: FESeq
     dataset_id: movielens1mseq_toy
@@ -69,8 +100,8 @@ FESeq_tossctr: # TossCTR dataset experiment (CSV format)
     target_field: ["inventory_id"]
     target_item_field: ["inventory_id"]
     bst_target_field: ["inventory_id"]
-    bst_sequence_field: ["seq_list"]
-    sequence_field: ["seq_list"]  # Add this for FESeq
+    bst_sequence_field: ["seq"]
+    sequence_field: ["seq"]  # Add this for FESeq
     time_keys: []  # TossCTR has no time fields
     num_time_embeddings: 0
     time_log_base: 2
@@ -90,7 +121,7 @@ FESeq_tossctr: # TossCTR dataset experiment (CSV format)
 
 FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     model: FESeq
-    dataset_id: tossctr_dataset
+    dataset_id: tossctr_h5_dataset
     loss: 'binary_crossentropy'
     metrics: ['logloss', 'AUC']
     task: binary_classification
@@ -98,7 +129,7 @@ FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     learning_rate: 1.0e-3
     embedding_regularizer: 0
     net_regularizer: 0
-    batch_size: 128  # 더 큰 배치 사이즈 (H5는 메모리 효율적)
+    batch_size: 1024  # 큰 배치 사이즈 (H5는 메모리 효율적)
     embedding_dim: 32
     dnn_hidden_units: [256, 128, 64]
     dnn_activations: ReLU
@@ -113,8 +144,8 @@ FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     target_field: ["inventory_id"]
     target_item_field: ["inventory_id"]
     bst_target_field: ["inventory_id"]
-    bst_sequence_field: ["seq_list"]
-    sequence_field: ["seq_list"]  # Add this for FESeq
+    bst_sequence_field: ["seq"]
+    sequence_field: ["seq"]  # Add this for FESeq
     time_keys: []  # TossCTR has no time fields
     num_time_embeddings: 0
     time_log_base: 2
@@ -123,7 +154,7 @@ FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     use_position_emb: True
     use_causal_mask: False
     batch_norm: False
-    epochs: 1  # H5는 더 빠르므로 더 많은 epoch
+    epochs: 1  # 빠른 테스트를 위해 1 epoch만
     shuffle: True
     seed: 20222023
     monitor: {'AUC': 1, 'logloss': -1}
@@ -131,6 +162,53 @@ FESeq_tossctr_h5: # TossCTR dataset experiment (H5 format for large data)
     interaction_layer_name: crossnetv2
     use_seq_feature_interaction: True
     seq_feature_interaction_layers: 1
+
+FESeq_tossctr_ultra_fast: # 초고속 테스트용 설정 - 극도로 작은 모델
+    model: FESeq
+    dataset_id: tossctr_micro_dataset
+    loss: 'binary_crossentropy'
+    metrics: ['logloss', 'AUC']
+    task: binary_classification
+    optimizer: adam
+    learning_rate: 1.0e-1  # 매우 높은 학습률
+    embedding_regularizer: 0
+    net_regularizer: 0
+    batch_size: 10  # 전체 데이터 크기 (10개)
+    embedding_dim: 2   # 극소 임베딩
+    dnn_hidden_units: [4]  # 극소 네트워크
+    dnn_activations: ReLU
+    num_heads: 1
+    stacked_transformer_layers: 1
+    attention_dropout: 0.0
+    net_dropout: 0.0
+    layer_norm: False
+    use_residual: False
+    # TossCTR specific fields
+    default_field: ["gender"]
+    target_field: []  # 타겟 필드 제거
+    target_item_field: []
+    bst_target_field: []
+    bst_sequence_field: ["seq"]
+    sequence_field: ["seq"]
+    time_keys: []
+    num_time_embeddings: 0
+    time_log_base: 2
+    use_time_emb: False
+    seq_pooling_type: mean
+    use_position_emb: False
+    use_causal_mask: False
+    batch_norm: False
+    epochs: 1
+    shuffle: False
+    seed: 20222023
+    monitor: {'AUC': 1, 'logloss': -1}
+    monitor_mode: 'max'
+    interaction_layer_name: crossnetv2
+    use_seq_feature_interaction: False
+    seq_feature_interaction_layers: 0
+    early_stop_patience: 1
+    eval_steps: null  # 평가 단계 제거
+    verbose: 1  # 로그 최소화
 
 FESeq_0_eleme: # BST+default_field
     model: FESeq

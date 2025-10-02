@@ -92,8 +92,8 @@ class TossCTRParquetProcessor:
         # seq_list가 필요한데 없고, seq가 있으면 파생 생성
         for col in self.sequence_features:
             if col not in df.columns:
-                # 흔히 원본에 'seq'로 존재함
-                if 'seq' in df.columns:
+                # seq_list가 없는데 'seq'가 있으면 이를 사용하여 생성
+                if col == 'seq_list' and 'seq' in df.columns:
                     logging.info(f"Deriving missing sequence column '{col}' from 'seq'")
                     df[col] = df['seq'].apply(lambda x: self.preprocess_sequence(x, max_len=50))
                 else:
@@ -114,10 +114,14 @@ class TossCTRParquetProcessor:
         schema_cols = set(pf.schema.names)
         required_cols = set(self.categorical_features + self.numeric_features + self.sequence_features + [self.label_col['name']])
         read_cols = [c for c in required_cols if c in schema_cols]
-        # seq_list가 필요하지만 없음 + 'seq'가 있으면 함께 읽어서 파생
-        if any((c not in schema_cols) for c in self.sequence_features) and ('seq' in schema_cols):
-            if 'seq' not in read_cols:
-                read_cols.append('seq')
+        
+        # seq_list가 필요하지만 없고 'seq'가 있으면 함께 읽어서 파생
+        for seq_col in self.sequence_features:
+            if seq_col not in schema_cols:
+                if seq_col == 'seq_list' and 'seq' in schema_cols:
+                    if 'seq' not in read_cols:
+                        read_cols.append('seq')
+                        logging.info(f"Adding 'seq' column to read_cols for deriving '{seq_col}'")
         
         chunks = []
         for batch in pf.iter_batches(batch_size=chunk_size, columns=read_cols):
@@ -447,13 +451,47 @@ class TossCTRParquetProcessor:
         del df, train_df, val_df, test_df
         gc.collect()
 
+    def process_test_only(self, test_parquet_path: str, chunk_size: int = 50000):
+        """이미 학습된 전처리기를 사용하여 test 데이터만 처리"""
+        logging.info("Processing test data only with existing preprocessors...")
+        
+        # 전처리기 로드
+        processor_path = os.path.join(self.output_dir, "feature_processor.pkl")
+        if not os.path.exists(processor_path):
+            raise FileNotFoundError(f"Preprocessor file not found: {processor_path}")
+        
+        with open(processor_path, 'rb') as f:
+            processor_data = pickle.load(f)
+        
+        self.encoders = processor_data['encoders']
+        self.scalers = processor_data['scalers']
+        self.categorical_features = processor_data['categorical_features']
+        self.numeric_features = processor_data['numeric_features']
+        self.sequence_features = processor_data['sequence_features']
+        
+        logging.info("Loaded preprocessors successfully")
+        
+        # test 데이터 로드
+        test_df = self.load_parquet_chunks(test_parquet_path, chunk_size)
+        
+        # test.h5 생성
+        self.process_and_save_h5(test_df, "test")
+        
+        logging.info("✅ Test data processing completed!")
+        
+        # 메모리 정리
+        del test_df
+        gc.collect()
+
 
 def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Convert TossCTR parquet to H5 format')
-    parser.add_argument('--train_path', type=str, required=True, 
+    parser.add_argument('--train_path', type=str, required=False, 
                        help='Path to train.parquet file')
+    parser.add_argument('--test_path', type=str, required=False,
+                       help='Path to test.parquet file (for test-only processing)')
     parser.add_argument('--config_path', type=str, required=True,
                        help='Path to dataset config YAML file')
     parser.add_argument('--data_root', type=str, default='data',
@@ -462,6 +500,8 @@ def main():
                        help='Chunk size for processing large files')
     parser.add_argument('--n_samples', type=int, default=None,
                        help='Number of samples to use (None for all)')
+    parser.add_argument('--test_only', action='store_true',
+                       help='Process only test data using existing preprocessors')
     
     args = parser.parse_args()
     
@@ -471,12 +511,23 @@ def main():
         data_root=args.data_root
     )
     
-    # 전체 파이프라인 실행
-    processor.process_full_pipeline(
-        train_parquet_path=args.train_path,
-        chunk_size=args.chunk_size,
-        n_samples=args.n_samples
-    )
+    if args.test_only:
+        if not args.test_path:
+            raise ValueError("--test_path is required when --test_only is specified")
+        # test 데이터만 처리
+        processor.process_test_only(
+            test_parquet_path=args.test_path,
+            chunk_size=args.chunk_size
+        )
+    else:
+        if not args.train_path:
+            raise ValueError("--train_path is required for full pipeline")
+        # 전체 파이프라인 실행
+        processor.process_full_pipeline(
+            train_parquet_path=args.train_path,
+            chunk_size=args.chunk_size,
+            n_samples=args.n_samples
+        )
 
 
 if __name__ == "__main__":
