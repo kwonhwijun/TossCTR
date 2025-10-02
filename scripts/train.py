@@ -17,13 +17,13 @@ from pathlib import Path
 import gc
 
 from fuxictr.utils import load_config, set_logger, print_to_json, print_to_list
-from fuxictr.features import FeatureMap
+from fuxictr.features import FeatureMapAbsTime
 from fuxictr.pytorch.torch_utils import seed_everything
 from fuxictr.pytorch.dataloaders import H5DataLoader
 from fuxictr.preprocess import FeatureProcessor, build_dataset
 
 # FESeq 모델 import - 경로 수정
-sys.path.insert(0, os.path.join(project_root, 'models', 'FESeq'))
+sys.path.insert(0, os.path.join(project_root, 'models'))
 from model_zoo.FESeq.src.FESeq import FESeq
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -61,12 +61,16 @@ def train_feseq(config_dir: str, experiment_id: str, gpu: int = -1, mode: str = 
             build_dataset(feature_encoder, **params)
     
     # Feature map 로드
-    feature_map = FeatureMap(params['dataset_id'], data_dir)
+    feature_map = FeatureMapAbsTime(params['dataset_id'], data_dir)
     feature_map.load(feature_map_json, params)
     logging.info("Feature specs: " + print_to_json(feature_map.features))
     
     # 모델 초기화 - params 전달 방식 수정
-    model = FESeq(feature_map, params)
+    if 'verbose' not in params :
+        print("no verbose in params")
+        params['verbose'] = 1
+
+    model = FESeq(feature_map, params, **params)
     model.count_parameters()
     
     # 학습 모드

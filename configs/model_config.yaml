@@ -22,7 +22,7 @@ FESeq_toy:
     learning_rate: 1.0e-3
     embedding_regularizer: 0
     net_regularizer: 0
-    batch_size: 64
+    batch_size: 512
     embedding_dim: 8
     dnn_hidden_units: [128, 64]
     dnn_activations: relu
@@ -57,6 +57,67 @@ FESeq_toy:
     time_log_base: -1
     time_keys: ["_dummy_time_1", "_dummy_time_2"]
     epochs: 2
+    shuffle: True
+    seed: 42
+    monitor: {'AUC': 1, 'logloss': -1}
+    monitor_mode: 'max'
+    gpu: 0
+
+
+FESeq_medium:
+    model: FESeq
+    dataset_id: tossctr_medium  # ← 중요! 데이터셋 ID 매칭
+    loss: 'binary_crossentropy'
+    metrics: ['logloss', 'AUC']
+    task: binary_classification
+    optimizer: adam
+    learning_rate: 1.0e-3
+    embedding_regularizer: 0
+    net_regularizer: 0
+    
+    # ⭐ 모델 크기 (toy보다 크게!)
+    batch_size: 256             # toy: 64 → medium: 1024 (16배)
+    embedding_dim: 16            # toy: 8 → medium: 16 (2배)
+    dnn_hidden_units: [128, 64]  # toy: [128, 64] → 레이어 추가
+    dnn_activations: relu
+    
+    # Transformer 설정 (강화)
+    num_heads: 4                  # toy: 2 → medium: 4
+    stacked_transformer_layers: 2  # toy: 1 → medium: 2
+    attention_dropout: 0.1
+    net_dropout: 0.1
+    fi_dropout: 0.1
+    layer_norm: True
+    use_residual: True
+    
+    # FESeq specific parameters
+    default_field: ["gender", "age_group", "day_of_week", "hour"]
+    target_field: ["inventory_id"]
+    target_item_field: ["inventory_id"]
+    sequence_field: ["seq"]
+    seq_pooling_type: mean
+    seq_pooling_attn_type: bilinear_attention
+    use_pooling_attn_scale: True
+    rel_score_hidden_dim: 128     # toy: 64 → medium: 128
+    use_position_emb: True
+    use_time_emb: False
+    use_causal_mask: False
+    batch_norm: False
+    
+    # Feature interaction parameters
+    interaction_layer_name: crossnetv2
+    use_seq_feature_interaction: True
+    seq_feature_interaction_layers: 2  # toy: 1 → medium: 2
+    use_item_feature_interaction: False
+    item_feature_interaction_layers: 0
+    
+    # Time embedding parameters
+    num_time_embeddings: 1
+    time_log_base: -1
+    time_keys: ["_dummy_time_1", "_dummy_time_2"]
+    
+    # Training parameters
+    epochs: 4                     # medium은 3 epoch면 충분
     shuffle: True
     seed: 42
     monitor: {'AUC': 1, 'logloss': -1}

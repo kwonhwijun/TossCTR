@@ -1,0 +1,425 @@
+{
+  "dataset_id": "tossctr_dataset",
+  "num_fields": 81,
+  "total_features": 724,
+  "input_length": 0,
+  "features": [
+    {
+      "gender": {
+        "type": "categorical",
+        "vocab_size": 5
+      }
+    },
+    {
+      "age_group": {
+        "type": "categorical",
+        "vocab_size": 11
+      }
+    },
+    {
+      "inventory_id": {
+        "type": "categorical",
+        "vocab_size": 20
+      }
+    },
+    {
+      "day_of_week": {
+        "type": "categorical",
+        "vocab_size": 9
+      }
+    },
+    {
+      "hour": {
+        "type": "categorical",
+        "vocab_size": 26
+      }
+    },
+    {
+      "l_feat_1": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_2": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_3": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_4": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_5": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_6": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_7": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_8": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_9": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_10": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_11": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_12": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_13": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_14": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_15": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_16": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_17": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_18": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_19": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_20": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_21": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_22": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_23": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_24": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_25": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_26": {
+        "type": "numeric"
+      }
+    },
+    {
+      "l_feat_27": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_1": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_2": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_3": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_4": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_5": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_6": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_7": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_8": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_9": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_e_10": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_d_1": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_d_2": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_d_3": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_d_4": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_d_5": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_d_6": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_1": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_2": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_3": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_4": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_5": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_6": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_7": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_c_8": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_b_1": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_b_2": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_b_3": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_b_4": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_b_5": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_b_6": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_1": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_2": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_3": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_4": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_5": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_6": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_7": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_8": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_9": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_10": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_11": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_12": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_13": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_14": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_15": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_16": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_17": {
+        "type": "numeric"
+      }
+    },
+    {
+      "feat_a_18": {
+        "type": "numeric"
+      }
+    },
+    {
+      "seq_list": {
+        "type": "sequence",
+        "dtype": "str",
+        "vocab_size": 578,
+        "max_len": 50,
+        "feature_encoder": null
+      }
+    }
+  ],
+  "labels": [
+    "clicked"
+  ]
+}

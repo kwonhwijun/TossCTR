@@ -1,0 +1,591 @@
+#!/usr/bin/env python3
+"""
+TossCTR Parquet -> H5 (Memory-efficient, Streaming)
+- No full DataFrame concat
+- Two-pass fitting (train-only) + streaming transform
+- Sequence handling optimized (no giant lists, numpy prealloc)
+"""
+
+import os
+import sys
+import gc
+import json
+import yaml
+import pickle
+import logging
+from typing import Dict, List, Tuple, Optional
+from collections import Counter, defaultdict
+
+import numpy as np
+import pandas as pd
+import pyarrow.parquet as pq
+import h5py
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+
+# (Optional) If you still need FuxiCTR utils; we won't use save_h5 (non-streaming)
+sys.path.append('/home/hj/TossCTR/colab_feseq')
+# from fuxictr.preprocess.feature_processor import FeatureProcessor  # not used
+# from fuxictr.preprocess.build_dataset import save_h5             # not used
+
+logging.basicConfig(level=logging.INFO)
+
+
+class H5AppendWriter:
+    """Append-only H5 writer with extendable datasets."""
+    def __init__(self, path: str, compression: Optional[str] = "lzf"):
+        # remove existing file to avoid shape mismatch
+        if os.path.exists(path):
+            os.remove(path)
+        self.h5 = h5py.File(path, "w")
+        self.ds = {}
+        self.compression = compression
+
+    def _create_or_get(self, name: str, arr: np.ndarray):
+        if name in self.ds:
+            return self.ds[name]
+        shape = (0,) + tuple(arr.shape[1:])
+        maxshape = (None,) + tuple(arr.shape[1:])
+        dset = self.h5.create_dataset(
+            name, shape=shape, maxshape=maxshape, dtype=arr.dtype,
+            compression=self.compression
+        )
+        self.ds[name] = dset
+        return dset
+
+    def append(self, arrays: Dict[str, np.ndarray]):
+        # determine batch size
+        sizes = [v.shape[0] for v in arrays.values() if v is not None]
+        if not sizes:
+            return
+        n = sizes[0]
+        # sanity check
+        for k, v in arrays.items():
+            if v is None:
+                continue
+            if v.shape[0] != n:
+                raise ValueError(f"Dataset '{k}' has inconsistent batch size: {v.shape[0]} vs {n}")
+        # append each array
+        for k, v in arrays.items():
+            if v is None:
+                continue
+            dset = self._create_or_get(k, v)
+            old = dset.shape[0]
+            dset.resize(old + n, axis=0)
+            dset[old:old + n, ...] = v
+
+    def close(self):
+        self.h5.flush()
+        self.h5.close()
+
+
+class TossCTRParquetProcessor:
+    """Memory-efficient, streaming TossCTR Parquet -> H5 converter."""
+
+    def __init__(self, config_path: str, data_root: str = "data"):
+        self.config_path = config_path
+        self.data_root = data_root
+        self.config = self._load_config()
+        self.dataset_config = self.config['tossctr_dataset']
+
+        # output dir
+        self.output_dir = os.path.join(data_root, 'tossctr')
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        # feature config
+        self.feature_cols = self.dataset_config['feature_cols']
+        self.label_col = self.dataset_config['label_col']
+        # allow both spellings
+        self.min_categr_count = self.dataset_config.get('min_categr_count',
+                                   self.dataset_config.get('min_category_count', 1))
+
+        # sequence settings
+        self.seq_max_len = self.dataset_config.get('sequence_max_len', 50)
+        self.seq_source_col = self.dataset_config.get('sequence_source_col', 'seq')
+        self.seq_input_delim = self.dataset_config.get('sequence_input_delim', ',')
+        # no need to store '^' joined string anymore; we encode directly
+
+        # classify features
+        self._classify_features()
+
+        # preprocessors
+        self.encoders: Dict = {}           # cat: LabelEncoder; seq: {'vocab', 'vocab_size', 'max_len'}
+        self.scalers: Dict[str, MinMaxScaler] = {}
+        # for transform-time fast check
+        self.categorical_valid_values: Dict[str, set] = {}
+
+    def _load_config(self) -> Dict:
+        with open(self.config_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+
+    def _classify_features(self):
+        self.categorical_features = []
+        self.numeric_features = []
+        self.sequence_features = []
+
+        for feat_group in self.feature_cols:
+            feat_type = feat_group['type']
+            feat_names = feat_group['name']
+            if isinstance(feat_names, str):
+                feat_names = [feat_names]
+            if feat_type == 'categorical':
+                self.categorical_features.extend(feat_names)
+            elif feat_type == 'numeric':
+                self.numeric_features.extend(feat_names)
+            elif feat_type == 'sequence':
+                self.sequence_features.extend(feat_names)
+
+        logging.info(f"Categorical features: {len(self.categorical_features)}")
+        logging.info(f"Numeric features: {len(self.numeric_features)}")
+        logging.info(f"Sequence features: {len(self.sequence_features)}")
+
+    # --------------------------
+    # Low-level: arrow streaming
+    # --------------------------
+    def _iter_batches(self, parquet_path: str, columns: List[str], chunk_size: int):
+        pf = pq.ParquetFile(parquet_path)
+        offset = 0
+        for batch in pf.iter_batches(batch_size=chunk_size, columns=columns):
+            df = batch.to_pandas(types_mapper=None)  # default dtype mapping
+            n = len(df)
+            yield offset, df
+            offset += n
+
+    def _get_schema_cols(self, parquet_path: str) -> set:
+        return set(pq.ParquetFile(parquet_path).schema.names)
+
+    # ------------------------------------------------
+    # Stage 0: read labels only and make split masks
+    # ------------------------------------------------
+    def _build_split_masks(self, parquet_path: str, chunk_size: int,
+                           train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
+        label_name = self.label_col['name']
+        logging.info("Scanning labels to build stratified split masks...")
+        labels: List[np.ndarray] = []
+        for _, df in self._iter_batches(parquet_path, [label_name], chunk_size):
+            labels.append(df[label_name].to_numpy())
+            del df
+        y = np.concatenate(labels, axis=0)
+        del labels
+        # make sure it's suitable for stratify (binary/int)
+        if y.dtype.kind in ('f',):
+            # best effort: cast 0/1 floats to int
+            y = y.astype(np.int64)
+        n = y.shape[0]
+        idx = np.arange(n, dtype=np.int64)
+
+        train_idx, temp_idx, y_train, y_temp = train_test_split(
+            idx, y, test_size=(val_ratio + test_ratio), random_state=42, stratify=y
+        )
+        val_size = test_ratio / (val_ratio + test_ratio)
+        val_idx, test_idx = train_test_split(
+            temp_idx, test_size=val_size, random_state=42, stratify=y_temp
+        )
+
+        train_mask = np.zeros(n, dtype=np.bool_)
+        val_mask   = np.zeros(n, dtype=np.bool_)
+        test_mask  = np.zeros(n, dtype=np.bool_)
+        train_mask[train_idx] = True
+        val_mask[val_idx]     = True
+        test_mask[test_idx]   = True
+
+        logging.info(f"Split sizes -> train: {train_mask.sum()}, val: {val_mask.sum()}, test: {test_mask.sum()}")
+        logging.info(f"Click rates -> "
+                     f"train: {y[train_mask].mean():.4f}, "
+                     f"val: {y[val_mask].mean():.4f}, "
+                     f"test: {y[test_mask].mean():.4f}")
+        return train_mask, val_mask, test_mask, n
+
+    # ---------------------------------------------------------
+    # Stage 1: fit preprocessors on TRAIN ONLY (streaming)
+    # ---------------------------------------------------------
+    def _fit_preprocessors_streaming(self, parquet_path: str, train_mask: np.ndarray, chunk_size: int):
+        schema_cols = self._get_schema_cols(parquet_path)
+
+        # figure out which columns to read for fitting
+        # - categorical: those present
+        # - numeric: present
+        # - sequence: prefer each col; if missing, fallback to seq_source_col if present
+        fit_columns = set([self.label_col['name']])
+        fit_columns.update([c for c in self.categorical_features if c in schema_cols])
+        fit_columns.update([c for c in self.numeric_features if c in schema_cols])
+
+        seq_source_by_feat = {}
+        for col in self.sequence_features:
+            if col in schema_cols:
+                seq_source_by_feat[col] = col
+                fit_columns.add(col)
+            elif self.seq_source_col in schema_cols:
+                seq_source_by_feat[col] = self.seq_source_col
+                fit_columns.add(self.seq_source_col)
+            else:
+                logging.warning(f"Sequence feature '{col}' and source '{self.seq_source_col}' not found in parquet.")
+                seq_source_by_feat[col] = None  # can't fit, will be skipped
+
+        # accumulators
+        # categorical
+        cat_counters: Dict[str, Counter] = {c: Counter() for c in self.categorical_features if c in schema_cols}
+        # numeric
+        num_mins: Dict[str, float] = {}
+        num_maxs: Dict[str, float] = {}
+        # sequence
+        seq_counters: Dict[str, Counter] = {c: Counter() for c in self.sequence_features if seq_source_by_feat[c]}
+
+        logging.info("Fitting preprocessors on TRAIN rows (streaming)...")
+        offset = 0
+        for off, df in self._iter_batches(parquet_path, sorted(list(fit_columns)), chunk_size):
+            # align with global mask
+            n = len(df)
+            mask = train_mask[off:off+n]
+            if mask.sum() == 0:
+                offset += n
+                del df
+                continue
+
+            # categorical counters
+            for col in list(cat_counters.keys()):
+                s = df[col]
+                if s is None:
+                    continue
+                # train rows only; NA -> 'unknown'
+                s_train = s[mask]
+                s_train = s_train.astype(str)
+                s_train = s_train.fillna('unknown')
+                # update counts (vectorized -> tolist creates refs; acceptable here)
+                cat_counters[col].update(s_train.tolist())
+
+            # numeric min/max
+            for col in self.numeric_features:
+                if col not in df.columns:
+                    continue
+                s = pd.to_numeric(df[col], errors='coerce')
+                s = s.fillna(0.0)
+                s = s[mask]
+                if s.empty:
+                    continue
+                vmin = float(s.min())
+                vmax = float(s.max())
+                if col not in num_mins:
+                    num_mins[col] = vmin
+                    num_maxs[col] = vmax
+                else:
+                    num_mins[col] = min(num_mins[col], vmin)
+                    num_maxs[col] = max(num_maxs[col], vmax)
+
+            # sequence vocab (count only first seq_max_len tokens to control blow-up)
+            for feat, src in seq_source_by_feat.items():
+                if not src or src not in df.columns:
+                    continue
+                seq_series = df[src][mask]
+                cnt = seq_counters[feat]
+                for seq_str in seq_series:
+                    if pd.isna(seq_str) or seq_str == "":
+                        continue
+                    toks = str(seq_str).split(self.seq_input_delim)
+                    if self.seq_max_len:
+                        toks = toks[:self.seq_max_len]
+                    cnt.update(toks)
+
+            offset += n
+            del df
+            if offset % (chunk_size * 5) == 0:
+                logging.info(f"[fit] processed rows: {offset:,}")
+            gc.collect()
+
+        # finalize categorical encoders
+        for col, counter in cat_counters.items():
+            valid_values = [k for k, c in counter.items() if c >= self.min_categr_count]
+            # ensure 'unknown' & 'rare' in classes
+            classes = sorted(set(valid_values) | {'unknown', 'rare'})
+            le = LabelEncoder()
+            le.fit(np.array(classes, dtype=object))
+            self.encoders[col] = le
+            self.categorical_valid_values[col] = set(valid_values) | {'unknown'}
+            logging.info(f"[fit] Categorical '{col}': valid={len(valid_values)}, classes(total)={len(le.classes_)}")
+
+        # finalize numeric scalers
+        for col in self.numeric_features:
+            if col not in num_mins:
+                continue
+            # fit scaler using just min/max samples
+            scaler = MinMaxScaler()
+            scaler.fit(np.array([[num_mins[col]], [num_maxs[col]]], dtype=np.float64))
+            self.scalers[col] = scaler
+            logging.info(f"[fit] Numeric '{col}': min={num_mins[col]}, max={num_maxs[col]}")
+
+        # finalize sequence vocabs
+        for feat, counter in seq_counters.items():
+            valid_tokens = [t for t, c in counter.items() if c >= self.min_categr_count]
+            vocab = ['__PAD__', '__OOV__'] + valid_tokens
+            token_to_idx = {tok: i for i, tok in enumerate(vocab)}
+            self.encoders[feat] = {
+                'vocab': token_to_idx,
+                'vocab_size': len(vocab),
+                'max_len': self.seq_max_len
+            }
+            logging.info(f"[fit] Sequence '{feat}': vocab_size={len(vocab)} (after min_count={self.min_categr_count})")
+
+    # ----------------------------------------------
+    # Transform helpers (memory-conscious)
+    # ----------------------------------------------
+    def _transform_categorical(self, df: pd.DataFrame) -> Dict[str, np.ndarray]:
+        arrays = {}
+        for col, le in self.encoders.items():
+            if col not in self.categorical_features:
+                continue
+            if col not in df.columns:
+                continue
+            # map to str & fill
+            s = df[col].astype(str).fillna('unknown')
+            # map unseen to 'rare'
+            valid = self.categorical_valid_values.get(col, set())
+            mask = s.isin(valid)
+            s = s.where(mask, 'rare')
+            # fast codes via Categorical to avoid Python loops
+            codes = pd.Categorical(s, categories=le.classes_).codes.astype(np.int32)
+            arrays[col] = codes
+        return arrays
+
+    def _transform_numeric(self, df: pd.DataFrame) -> Dict[str, np.ndarray]:
+        arrays = {}
+        for col, scaler in self.scalers.items():
+            if col not in df.columns:
+                continue
+            s = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(np.float64)
+            x = scaler.transform(s.to_numpy().reshape(-1, 1)).astype(np.float32).ravel()
+            arrays[col] = x
+        return arrays
+
+    def _transform_sequence(self, df: pd.DataFrame, seq_source_by_feat: Dict[str, Optional[str]]) -> Dict[str, np.ndarray]:
+        arrays = {}
+        for feat in self.sequence_features:
+            enc = self.encoders.get(feat)
+            src = seq_source_by_feat.get(feat)
+            if (enc is None) or (src is None) or (src not in df.columns):
+                continue
+
+            vocab = enc['vocab']
+            max_len = enc['max_len']
+            pad_id = vocab['__PAD__']
+            oov_id = vocab['__OOV__']
+
+            n = len(df)
+            arr = np.full((n, max_len), pad_id, dtype=np.int32)
+            seq_series = df[src].fillna('')
+            # row-wise fill without building big python lists
+            for i, seq_str in enumerate(seq_series):
+                if not seq_str:
+                    continue
+                toks = str(seq_str).split(self.seq_input_delim)
+                if max_len:
+                    toks = toks[:max_len]
+                if not toks:
+                    continue
+                # map tokens
+                t_ids = [vocab.get(t, oov_id) for t in toks]
+                arr[i, :len(t_ids)] = t_ids
+            arrays[feat] = arr
+        return arrays
+
+    # ----------------------------------------------
+    # Stage 2: streaming transform + H5 append
+    # ----------------------------------------------
+    def _stream_transform_to_h5(self, parquet_path: str, split_mask: np.ndarray,
+                                split_name: str, chunk_size: int):
+        schema_cols = self._get_schema_cols(parquet_path)
+        read_cols = set([self.label_col['name']])
+        read_cols.update([c for c in self.categorical_features if c in schema_cols])
+        read_cols.update([c for c in self.numeric_features if c in schema_cols])
+
+        seq_source_by_feat = {}
+        for col in self.sequence_features:
+            if col in schema_cols:
+                seq_source_by_feat[col] = col
+                read_cols.add(col)
+            elif self.seq_source_col in schema_cols:
+                seq_source_by_feat[col] = self.seq_source_col
+                read_cols.add(self.seq_source_col)
+            else:
+                logging.warning(f"[{split_name}] Sequence feature '{col}' not found; skipping.")
+                seq_source_by_feat[col] = None
+
+        h5_path = os.path.join(self.output_dir, f"{split_name}.h5")
+        writer = H5AppendWriter(h5_path, compression="lzf")
+
+        label_name = self.label_col['name']
+        total_written = 0
+        for off, df in self._iter_batches(parquet_path, sorted(list(read_cols)), chunk_size):
+            n = len(df)
+            mask = split_mask[off:off+n]
+            if mask.sum() == 0:
+                del df
+                continue
+            sdf = df[mask]  # subset for this split
+            # build arrays
+            out = {}
+
+            # categorical
+            out.update(self._transform_categorical(sdf))
+            # numeric
+            out.update(self._transform_numeric(sdf))
+            # sequence
+            out.update(self._transform_sequence(sdf, seq_source_by_feat))
+
+            # label
+            if label_name in sdf.columns:
+                out[label_name] = sdf[label_name].astype(np.float32).to_numpy()
+            else:
+                raise ValueError("Label column not found in subset DataFrame.")
+
+            # sanity: all arrays must have same length
+            lengths = [v.shape[0] for v in out.values()]
+            if len(set(lengths)) != 1:
+                raise RuntimeError(f"Array length mismatch in {split_name} chunk: {lengths}")
+
+            writer.append(out)
+            total_written += lengths[0]
+
+            # cleanup
+            del sdf, df, out
+            if total_written % (chunk_size * 10) == 0:
+                logging.info(f"[{split_name}] written rows: {total_written:,}")
+            gc.collect()
+
+        writer.close()
+        logging.info(f"[{split_name}] DONE. total rows written: {total_written:,}")
+
+    # ----------------------------------------------
+    # Feature map & processors
+    # ----------------------------------------------
+    def save_feature_map(self):
+        features_list = []
+        num_fields = 0
+        total_features = 0
+
+        # categorical
+        for col in self.categorical_features:
+            le = self.encoders.get(col)
+            if le is not None and hasattr(le, 'classes_'):
+                vocab_size = len(le.classes_)
+                spec = {"type": "categorical", "vocab_size": vocab_size}
+                features_list.append({col: spec})
+                total_features += vocab_size
+                num_fields += 1
+
+        # numeric
+        for col in self.numeric_features:
+            if col in self.scalers:
+                features_list.append({col: {"type": "numeric"}})
+                total_features += 1
+                num_fields += 1
+
+        # sequence
+        for col in self.sequence_features:
+            enc = self.encoders.get(col)
+            if isinstance(enc, dict) and 'vocab_size' in enc:
+                spec = {
+                    "type": "sequence",
+                    "dtype": "str",
+                    "vocab_size": enc['vocab_size'],
+                    "max_len": enc['max_len'],
+                    # NOTE: if you really need sharing, make it configurable
+                    # "share_embedding": "inventory_id",
+                    "feature_encoder": None
+                }
+                features_list.append({col: spec})
+                total_features += enc['vocab_size']
+                num_fields += 1
+
+        feature_map = {
+            "dataset_id": "tossctr_dataset",
+            "num_fields": num_fields,
+            "total_features": total_features,
+            "input_length": 0,
+            "features": features_list,
+            "labels": [self.label_col['name']]
+        }
+        feature_map_path = os.path.join(self.output_dir, "feature_map.json")
+        with open(feature_map_path, 'w') as f:
+            json.dump(feature_map, f, indent=2)
+        logging.info(f"Saved feature_map.json: {feature_map['num_fields']} fields, {feature_map['total_features']} features")
+
+    def save_processors(self):
+        processor_data = {
+            'encoders': self.encoders,                       # cat LabelEncoder / seq dict
+            'scalers': self.scalers,
+            'categorical_features': self.categorical_features,
+            'numeric_features': self.numeric_features,
+            'sequence_features': self.sequence_features,
+            'categorical_valid_values': {k: list(v) for k, v in self.categorical_valid_values.items()},
+            'seq_max_len': self.seq_max_len,
+            'seq_source_col': self.seq_source_col,
+            'min_categr_count': self.min_categr_count
+        }
+        processor_path = os.path.join(self.output_dir, "feature_processor.pkl")
+        with open(processor_path, 'wb') as f:
+            pickle.dump(processor_data, f)
+        logging.info(f"Saved processors to {processor_path}")
+
+    # ----------------------------------------------
+    # Orchestrator
+    # ----------------------------------------------
+    def process_full_pipeline(self, train_parquet_path: str, chunk_size: int = 50000,
+                              n_samples: Optional[int] = None):
+        """
+        End-to-end pipeline (streaming):
+        0) Build masks via labels-only pass
+        1) Fit preprocessors on TRAIN rows (stream)
+        2) Transform & H5-append per split (train -> val -> test)
+        """
+        logging.info("Starting streaming pipeline...")
+
+        # 0. build split masks from labels only
+        train_mask, val_mask, test_mask, n_rows = self._build_split_masks(
+            train_parquet_path, chunk_size
+        )
+
+        if n_samples is not None and n_samples < n_rows:
+            logging.warning("n_samples is provided but streaming pipeline writes FULL dataset. "
+                            "If you need sampling, consider prefiltering the parquet or adjust masks.")
+
+        # 1. fit preprocessors (TRAIN only)
+        self._fit_preprocessors_streaming(train_parquet_path, train_mask, chunk_size)
+
+        # 2. save processors & feature map (after fit)
+        self.save_processors()
+        self.save_feature_map()
+
+        # 3. stream-transform per split (sequential to release memory)
+        self._stream_transform_to_h5(train_parquet_path, train_mask, "train", chunk_size)
+        del train_mask; gc.collect()
+
+        self._stream_transform_to_h5(train_parquet_path, val_mask, "valid", chunk_size)
+        del val_mask; gc.collect()
+
+        self._stream_transform_to_h5(train_parquet_path, test_mask, "test", chunk_size)
+        del test_mask; gc.collect()
+
+        logging.info("✅ Full streaming pipeline completed!")
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='Convert TossCTR parquet to H5 (memory-efficient)')
+    parser.add_argument('--train_path', type=str, required=True, help='Path to train.parquet file')
+    parser.add_argument('--config_path', type=str, required=True, help='Path to dataset config YAML file')
+    parser.add_argument('--data_root', type=str, default='data', help='Data root directory')
+    parser.add_argument('--chunk_size', type=int, default=50000, help='Batch size for streaming')
+    parser.add_argument('--n_samples', type=int, default=None, help='(Not used in streaming; see logs)')
+    args = parser.parse_args()
+
+    processor = TossCTRParquetProcessor(config_path=args.config_path, data_root=args.data_root)
+    processor.process_full_pipeline(
+        train_parquet_path=args.train_path,
+        chunk_size=args.chunk_size,
+        n_samples=args.n_samples
+    )
+
+
+if __name__ == "__main__":
+    main()
